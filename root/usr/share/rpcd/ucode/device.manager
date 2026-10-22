@@ -1,0 +1,363 @@
+#!/usr/bin/env ucode
+'use strict';
+
+import { cursor } from 'uci';
+import { readfile, writefile, rename, unlink, access, popen, readlink } from 'fs';
+import { connect } from 'ubus';
+
+const PKG = 'device-manager';
+const RULE = '/etc/nftables.d/90-device-manager.nft';
+const TMP = '/tmp/device-manager-rules.nft';
+const STATE = '/tmp/device-manager-state.json';
+const SIGHTINGS = '/tmp/device-manager-sightings.json';
+const uc = cursor();
+const bus = connect();
+
+function mac(v) {
+	if (type(v) != 'string') return null;
+	v = lc(v);
+	return match(v, /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/) && v != '00:00:00:00:00:00' && v != 'ff:ff:ff:ff:ff:ff' ? v : null;
+}
+function ident(v) { return type(v) == 'string' && match(v, /^[a-zA-Z0-9_.-]{1,32}$/) ? v : null; }
+function groupId(v) { return type(v) == 'string' && match(v, /^[a-zA-Z0-9_]{1,32}$/) ? v : null; }
+function label(v, max) { return type(v) == 'string' && length(v) <= max && !match(v, /[[:cntrl:]]/) ? v : null; }
+function sid(m) { return 'd_' + replace(m, ':', ''); }
+function run(s) { return system(s + ' >/dev/null 2>&1') == 0; }
+function command(s) { let f = popen(s + ' 2>/dev/null'); if (!f) return ''; let t = f.read('all'); f.close(); return t || ''; }
+function all(typeName) { let a = []; uc.foreach(PKG, typeName, s => push(a, s)); return a; }
+function cfg(s, k) { return k == '.type' ? uc.get(PKG, s) : uc.get(PKG, s, k); }
+function set(s, k, v) { if (v == null || v == '') uc.delete(PKG, s, k); else uc.set(PKG, s, k, v); }
+function err(s) { return { error: s }; }
+function parsePayload(s) { try { return json(s); } catch (e) { return null; } }
+function adminMacs() {
+	let r = {};
+	for (let x in split(command('ip -o link show'), '\n')) {
+		let m = match(x, /link\/ether ([0-9a-f:]{17})/);
+		if (m) r[m[1]] = true;
+	}
+	return r;
+}
+function networkMap() {
+	uc.unload('network'); uc.unload('firewall');
+	let out = {}, nets = {}, zones = {};
+	let dump = bus.call('network.interface', 'dump', {}) || {};
+	for (let i in (dump.interface || [])) {
+		if (!i.interface) continue;
+		let d = i.l3_device || i.device;
+		if (d && ident(d)) { out[d] = i.interface; nets[i.interface] = d; }
+	}
+	uc.foreach('firewall', 'zone', z => {
+		let ns = z.network || [];
+		if (type(ns) == 'string') ns = split(ns, ' ');
+		for (let n in ns) zones[n] = z.name;
+	});
+	return { device: out, nets, zones };
+}
+function observe() {
+	uc.unload('dhcp');
+	let now = time(), found = {}, map = networkMap();
+	let sightings = parsePayload(readfile(SIGHTINGS) || '{}') || {}, changed = false;
+	function add(m, ip, host, dev, medium, active, source) {
+		m = mac(m); if (!m) return;
+		let d = found[m] || { mac: m, ips: [], hostname: '', interface: '', network: '', zone: '', medium: 'unknown', online: false, sources: [] };
+		if (ip && index(d.ips, ip) < 0) push(d.ips, ip);
+		if (host && host != '*' && !d.hostname) d.hostname = host;
+		if (dev && ident(dev)) { d.interface = dev; d.network = map.device[dev] || ''; d.zone = map.zones[d.network] || ''; }
+		if (medium) d.medium = medium;
+		if (active) { d.online = true; d.last_seen = now; }
+		if (index(d.sources, source) < 0) push(d.sources, source);
+		found[m] = d;
+	}
+	let leasefile = uc.get('dhcp', '@dnsmasq[0]', 'leasefile') || '/tmp/dhcp.leases';
+	if (!match(leasefile, /^\/(tmp|var\/run)\/[a-zA-Z0-9_.\/-]+$/)) leasefile = '/tmp/dhcp.leases';
+	for (let line in split(readfile(leasefile) || '', '\n')) {
+		let f = split(trim(line), /\s+/); if (length(f) >= 4) add(f[1], f[2], f[3], null, null, false, 'dhcp4');
+	}
+	uc.foreach('dhcp', 'host', h => {
+		let ms = h.mac || []; if (type(ms) == 'string') ms = split(ms, ' ');
+		for (let m in ms) {
+			add(m, h.ip, null, null, null, false, 'dhcp-static');
+			m = mac(m); if (m && found[m] && h.name) found[m].dns_hostname = h.name;
+		}
+	});
+	let leases6 = bus.call('dhcp', 'ipv6leases', {}) || {};
+	for (let l in (leases6.device || [])) {
+		for (let a in (l.ipaddrs || [])) add(l.mac, a.address, l.hostname, null, null, false, 'dhcp6');
+	}
+	for (let line in split(command('ip -o -4 neigh show') + '\n' + command('ip -o -6 neigh show'), '\n')) {
+		let m = match(line, /^([^ ]+) dev ([^ ]+).*lladdr ([0-9a-fA-F:]{17}).* (REACHABLE|DELAY|PROBE|STALE|FAILED|INCOMPLETE|PERMANENT)$/);
+		if (m) add(m[3], m[1], null, m[2], null, index(['REACHABLE', 'DELAY', 'PROBE'], m[4]) >= 0, 'neighbor');
+	}
+	let fdb = parsePayload(command('bridge -j fdb show')) || [];
+	for (let f in fdb) {
+		if (!f.mac || !f.dev || f.self || f.permanent) continue;
+		let master = readlink('/sys/class/net/' + f.dev + '/master');
+		let dev = master ? split(master, '/')[-1] : f.dev;
+		add(f.mac, null, null, dev, 'ethernet', false, 'bridge');
+	}
+	let names = split(command('ubus list'), '\n');
+	for (let name in names) {
+		if (!match(name, /^hostapd\.[a-zA-Z0-9_.-]+$/)) continue;
+		let h = bus.call(name, 'get_clients', {}) || {};
+		for (let m, data in (h.clients || {})) {
+			let dev = substr(name, 8);
+			add(m, null, null, dev, 'wifi', !!data.authenticated, 'hostapd');
+		}
+	}
+	for (let m, d in found) {
+		let old = sightings[m] || {};
+		if (!old.first_seen) { old.first_seen = now; changed = true; }
+		if (d.online) { old.last_seen = now; changed = true; }
+		if (old.online != d.online) {
+			old.status_history = old.status_history || [];
+			push(old.status_history, { when: now, online: d.online });
+			if (length(old.status_history) > 20) shift(old.status_history);
+			old.online = d.online; changed = true;
+		}
+		d.first_seen = old.first_seen;
+		d.last_seen = old.last_seen || 0;
+		d.status_history = old.status_history || [];
+		sightings[m] = old;
+	}
+	for (let m, old in sightings) if (!found[m] && old.online) {
+		old.online = false;
+		old.status_history = old.status_history || [];
+		push(old.status_history, { when: now, online: false });
+		if (length(old.status_history) > 20) shift(old.status_history);
+		changed = true;
+	}
+	if (changed) writefile(SIGHTINGS, sprintf('%J', sightings));
+	return found;
+}
+function intervals(s) {
+	if (!s) return [];
+	let a = split(s, ';'), out = [];
+	for (let item in a) {
+		let m = match(item, /^([1-7](,[1-7])*)@([0-2][0-9]):([0-5][0-9])-([0-2][0-9]):([0-5][0-9])$/);
+		if (!m) return null;
+		let start = +m[3] * 60 + +m[4], end = +m[5] * 60 + +m[6];
+		if (start >= end || end > 1440 || start >= 1440) return null;
+		push(out, { days: split(m[1], ','), start, end });
+	}
+	return out;
+}
+function allowed(s, now) {
+	let periods = intervals(s); if (!periods) return false;
+	let t = localtime(now), day = t.wday == 0 ? '7' : '' + t.wday, minute = t.hour * 60 + t.min;
+	for (let p in periods) if (index(p.days, day) >= 0 && minute >= p.start && minute < p.end) return true;
+	return false;
+}
+function list() {
+	uc.unload(PKG);
+	let seen = observe(), devices = [], by = {}, sightings = parsePayload(readfile(SIGHTINGS) || '{}') || {};
+	let activeRules = lc(command('nft list chain inet fw4 dm_forward'));
+	for (let s in all('device')) {
+		let m = mac(s.mac); if (!m || by[m]) continue;
+		by[m] = true;
+		let d = seen[m] || { mac: m, ips: [], online: false, sources: [] };
+		d.id = s['.name']; d.registered = true;
+		d.name = s.name || d.hostname || s.hostname || m;
+		d.description = s.description || '';
+		d.type = s.kind || '';
+		d.group = s.group || '';
+		d.hostname = d.hostname || s.hostname || '';
+		d.dns_hostname = d.dns_hostname || s.dns_hostname || '';
+		d.interface = d.interface || s.interface || '';
+		d.network = d.network || s.network || '';
+		d.zone = d.zone || s.zone || '';
+		d.medium = d.medium || 'unknown';
+		d.last_seen = d.last_seen || +(sightings[m]?.last_seen || s.last_seen || 0);
+		d.status_history = d.status_history || sightings[m]?.status_history || [];
+		d.first_seen = +(s.first_seen || d.first_seen || s.registered_at || 0);
+		d.registered_at = +(s.registered_at || 0);
+		d.blocked = s.blocked == '1';
+		d.schedule_enabled = s.schedule_enabled == '1';
+		d.schedule = s.schedule || '';
+		d.desired_blocked = d.blocked || (d.schedule_enabled && !allowed(d.schedule, time()));
+		d.rule_applied = activeRules ? index(activeRules, m) >= 0 : null;
+		d.internet_blocked = d.rule_applied == null ? false : d.rule_applied;
+		d.speed_enabled = s.speed_enabled == '1';
+		d.down_mbps = +(s.down_mbps || 0);
+		d.up_mbps = +(s.up_mbps || 0);
+		d.ip_mode = s.ip_mode || 'dynamic';
+		d.history = parsePayload(s.history || '[]') || [];
+		push(devices, d);
+	}
+	for (let m, d in seen) if (!by[m]) {
+		d.id = sid(m); d.registered = false; d.name = d.hostname || m;
+		d.blocked = false; d.desired_blocked = false; d.internet_blocked = false; d.rule_applied = activeRules ? index(activeRules, m) >= 0 : null; d.last_seen = d.last_seen || 0;
+		push(devices, d);
+	}
+	let counts = { all: length(devices), registered: 0, unregistered: 0, online: 0, offline: 0, blocked: 0 };
+	for (let d in devices) { counts[d.registered ? 'registered' : 'unregistered']++; counts[d.online ? 'online' : 'offline']++; if (d.internet_blocked) counts.blocked++; }
+	return { devices, counts, groups: all('group'), now: time() };
+}
+function generate(observed) {
+	let map = networkMap(), zone = cfg('main', 'internet_zone') || 'wan', destinations = [], active = [], now = time(), state = {}, seenMacs = {};
+	observed ||= observe();
+	if (cfg('main', 'schema') != '1') return err('Неизвестная версия конфигурации device-manager');
+	uc.foreach('firewall', 'zone', z => {
+		if (z.name != zone) return;
+		let ns = z.network || []; if (type(ns) == 'string') ns = split(ns, ' ');
+		for (let n in ns) if (map.nets[n]) push(destinations, map.nets[n]);
+	});
+	for (let s in all('device')) {
+		if (!mac(s.mac) || seenMacs[lc(s.mac)]) return err('В реестре есть некорректные или повторяющиеся MAC-адреса');
+		seenMacs[lc(s.mac)] = true;
+		if (s.blocked != '1' && s.schedule_enabled != '1') continue;
+		let m = mac(s.mac), src = ident((observed[m]?.online && observed[m]?.interface) || s.interface);
+		if (!m || !src || !map.device[src]) return err('Невозможно надёжно определить исходящий интерфейс устройства ' + (s.name || s.mac));
+		if (s.blocked == '1' || (s.schedule_enabled == '1' && !allowed(s.schedule || '', now))) { push(active, { mac: m, src }); state[m] = true; }
+	}
+	if (length(active) && !length(destinations)) return err('Не найдены действующие интерфейсы интернет-зоны ' + zone);
+	if (length(active) && uc.get('firewall', '@defaults[0]', 'flow_offloading_hw') == '1') return err('Аппаратный flow offloading включён: блокировка не может быть гарантирована');
+	let lines = ['# Generated by device-manager. Do not edit.\n', 'chain dm_forward {\n', '  type filter hook forward priority -1; policy accept;\n'];
+	for (let a in active) for (let dst in destinations) {
+		if (!ident(dst)) continue;
+		push(lines, sprintf('  iifname "%s" oifname "%s" ether saddr %s counter drop\n', a.src, dst, a.mac));
+	}
+	push(lines, '}\n');
+	return { text: join('', lines), state };
+}
+function applyRules(observed) {
+	let generated = generate(observed); if (generated.error) return generated;
+	let old = readfile(RULE);
+	if (old == generated.text) return { ok: true, active: generated.state };
+	if (!writefile(TMP, generated.text) || !rename(TMP, RULE)) return err('Не удалось подготовить правила firewall');
+	if (!run('fw4 check') || !run('fw4 reload')) {
+		if (old != null) writefile(RULE, old); else unlink(RULE);
+		run('fw4 reload');
+		return err('Проверка или применение firewall завершились ошибкой; правила восстановлены');
+	}
+	writefile(STATE, sprintf('%J', generated.state));
+	return { ok: true, active: generated.state };
+}
+function mutate(id, data, remove) {
+	uc.unload(PKG);
+	let m = mac(data?.mac || cfg(id, 'mac'));
+	if (!m) return err('Некорректный MAC');
+	id = sid(m);
+	let exists = cfg(id, '.type') == 'device';
+	if (remove && !exists) return err('Устройство не зарегистрировано');
+	if (!remove) {
+		let name = label(data.name || '', 80), description = label(data.description || '', 512);
+		let kind = label(data.type || '', 40), group = data.group || '';
+		if (name == null || description == null || kind == null || (group && !match(group, /^g_[a-zA-Z0-9_]{1,32}$/))) return err('Некорректные данные устройства');
+		if (group && cfg(group, '.type') != 'group') return err('Группа не существует');
+		if (data.schedule_enabled && !data.schedule) return err('Для включённого расписания нужен хотя бы один интервал');
+		if (data.schedule && !intervals(data.schedule)) return err('Некорректное расписание');
+		if (data.blocked || data.schedule_enabled) {
+			let own = adminMacs(); if (own[m]) return err('MAC маршрутизатора нельзя блокировать');
+		}
+		if (!exists) uc.set(PKG, id, 'device');
+		let observed = observe()[m] || {};
+		set(id, 'mac', m); set(id, 'name', name); set(id, 'description', description);
+		set(id, 'kind', kind); set(id, 'group', group);
+		set(id, 'hostname', observed.hostname || cfg(id, 'hostname') || '');
+		set(id, 'interface', ident(data.interface || observed.interface || cfg(id, 'interface')) || '');
+		set(id, 'network', observed.network || cfg(id, 'network') || '');
+		set(id, 'zone', observed.zone || cfg(id, 'zone') || '');
+		set(id, 'registered_at', cfg(id, 'registered_at') || '' + time());
+		let sightings = parsePayload(readfile(SIGHTINGS) || '{}') || {};
+		set(id, 'first_seen', cfg(id, 'first_seen') || '' + (sightings[m]?.first_seen || time()));
+		if (observed.online) set(id, 'last_seen', '' + time());
+		set(id, 'blocked', data.blocked ? '1' : '0');
+		set(id, 'schedule_enabled', data.schedule_enabled ? '1' : '0');
+		set(id, 'schedule', data.schedule || '');
+		set(id, 'ip_mode', 'dynamic');
+		// Rate limits are kept as user intent; applying them requires a supported shaper.
+		let down = +(data.down_mbps ?? cfg(id, 'down_mbps') ?? 0), up = +(data.up_mbps ?? cfg(id, 'up_mbps') ?? 0);
+		if (down < 0 || up < 0 || down > 100000 || up > 100000) return err('Некорректная скорость');
+		set(id, 'speed_enabled', '0'); set(id, 'down_mbps', '' + down); set(id, 'up_mbps', '' + up);
+		let history = parsePayload(cfg(id, 'history') || '[]') || [];
+		push(history, { when: time(), action: exists ? 'updated' : 'registered' });
+		if (length(history) > 20) shift(history);
+		set(id, 'history', sprintf('%J', history));
+	} else uc.delete(PKG, id);
+	let oldRule = readfile(RULE), result = applyRules();
+	if (result.error) { uc.revert(PKG); return result; }
+	if (!uc.commit(PKG)) {
+		if (oldRule != null) writefile(RULE, oldRule); else unlink(RULE);
+		run('fw4 reload'); uc.revert(PKG);
+		return err('Не удалось сохранить настройки UCI');
+	}
+	return { ok: true, id };
+}
+function sync() {
+	uc.unload(PKG);
+	let observed = observe();
+	let sightings = parsePayload(readfile(SIGHTINGS) || '{}') || {}, persist = false;
+	for (let d in all('device')) {
+		let last = +(sightings[d.mac]?.last_seen || 0);
+		if (last && last - +(d.last_seen || 0) >= 86400) { set(d['.name'], 'last_seen', '' + last); persist = true; }
+	}
+	if (persist) uc.commit(PKG);
+	let generated = generate(observed); if (generated.error) return generated;
+	let old = parsePayload(readfile(STATE) || '{}') || {};
+	if (readfile(RULE) == generated.text) return { ok: true };
+	return applyRules(observed);
+}
+function importData(raw) {
+	uc.unload(PKG);
+	if (type(raw) != 'string' || length(raw) > 131072) return err('Файл импорта слишком велик');
+	let data = parsePayload(raw);
+	if (!data || data.schema != 1 || type(data.devices) != 'array' || type(data.groups) != 'array' || length(data.devices) > 250 || length(data.groups) > 100 || (data.settings?.internet_zone && !ident(data.settings.internet_zone))) return err('Неподдерживаемый формат импорта');
+	let seen = {}, groupIds = {};
+	for (let g in data.groups) {
+		if (!match(g['.name'] || '', /^g_[a-zA-Z0-9_]{1,32}$/) || label(g.name, 80) == null || groupIds[g['.name']]) return err('Некорректная группа в файле');
+		groupIds[g['.name']] = true;
+	}
+	for (let d in data.devices) {
+		let m = mac(d.mac);
+		if (!m || seen[m] || label(d.name || '', 80) == null || label(d.description || '', 512) == null || label(d.kind || '', 40) == null || (d.interface && !ident(d.interface)) || (d.group && !groupIds[d.group] && cfg(d.group, '.type') != 'group') || (d.schedule_enabled == '1' && !d.schedule) || (d.schedule && !intervals(d.schedule)) || +(d.down_mbps || 0) < 0 || +(d.up_mbps || 0) < 0 || +(d.down_mbps || 0) > 100000 || +(d.up_mbps || 0) > 100000) return err('Некорректное или повторяющееся устройство в файле');
+		seen[m] = true;
+		if ((d.blocked == '1' || d.schedule_enabled == '1') && adminMacs()[m]) return err('Файл пытается ограничить MAC маршрутизатора');
+	}
+	for (let g in data.groups) { uc.set(PKG, g['.name'], 'group'); set(g['.name'], 'name', g.name); }
+	if (data.settings?.internet_zone) set('main', 'internet_zone', data.settings.internet_zone);
+	for (let d in data.devices) {
+		let id = sid(mac(d.mac)); uc.set(PKG, id, 'device');
+		for (let key in [ 'mac', 'name', 'description', 'kind', 'group', 'hostname', 'dns_hostname', 'interface', 'network', 'zone', 'registered_at', 'first_seen', 'last_seen', 'blocked', 'schedule_enabled', 'schedule', 'history' ]) set(id, key, d[key] || '');
+		set(id, 'speed_enabled', '0'); set(id, 'down_mbps', '' + (d.down_mbps || 0)); set(id, 'up_mbps', '' + (d.up_mbps || 0)); set(id, 'ip_mode', 'dynamic');
+	}
+	let oldRule = readfile(RULE), result = applyRules();
+	if (result.error) { uc.revert(PKG); return result; }
+	if (!uc.commit(PKG)) {
+		if (oldRule != null) writefile(RULE, oldRule); else unlink(RULE);
+		run('fw4 reload'); uc.revert(PKG);
+		return err('Не удалось сохранить импорт');
+	}
+	return { ok: true, imported: length(data.devices) };
+}
+function statistics(m) {
+	m = mac(m); if (!m) return err('Некорректный MAC');
+	if (!access('/usr/sbin/nlbw')) return { available: false, reason: 'Установите nlbwmon для учёта трафика' };
+	let report = parsePayload(command('/usr/sbin/nlbw -c json -g mac'));
+	if (!report || type(report.columns) != 'array' || type(report.data) != 'array') return { available: false, reason: 'nlbwmon не вернул корректные данные' };
+	let col = {}, rx = 0, tx = 0;
+	for (let i = 0; i < length(report.columns); i++) col[report.columns[i]] = i;
+	if (col.mac == null || col.rx_bytes == null || col.tx_bytes == null) return { available: false, reason: 'В отчёте nlbwmon нет счётчиков трафика' };
+	for (let row in report.data) if (lc(row[col.mac] || '') == m) { rx += +(row[col.rx_bytes] || 0); tx += +(row[col.tx_bytes] || 0); }
+	return { available: true, rx_bytes: rx, tx_bytes: tx, period: 'текущий период nlbwmon' };
+}
+function ruleStatus(m) {
+	m = mac(m); if (!m) return err('Некорректный MAC');
+	let rules = command('nft list chain inet fw4 dm_forward');
+	if (!rules) return { status: 'unknown' };
+	return { status: index(lc(rules), m) >= 0 ? 'active' : 'inactive' };
+}
+const methods = {
+	list: { call: () => list() },
+	details: { args: { mac: '' }, call: r => { let m = mac(r.args.mac); if (!m) return err('Некорректный MAC'); for (let d in list().devices) if (d.mac == m) return { device: d }; return err('Устройство не найдено'); } },
+	capabilities: { call: () => ({ firewall4: access('/sbin/fw4') || access('/usr/sbin/fw4'), nft: access('/usr/sbin/nft'), nlbwmon: access('/usr/sbin/nlbw'), speed: false, speed_reason: 'Индивидуальное шейпирование требует совместимой настройки tc/SQM и отключения flow offloading; на этой платформе оно не применяется автоматически.' }) },
+	statistics: { args: { mac: '' }, call: r => statistics(r.args.mac) },
+	rule_status: { args: { mac: '' }, call: r => ruleStatus(r.args.mac) },
+	save: { args: { payload: '' }, call: r => { let d = parsePayload(r.args.payload); return d ? mutate(sid(d.mac || ''), d, false) : err('Некорректный запрос'); } },
+	remove: { args: { mac: '' }, call: r => mutate(sid(r.args.mac), { mac: r.args.mac }, true) },
+	group: { args: { payload: '' }, call: r => { uc.unload(PKG); let d = parsePayload(r.args.payload); if (!d || !groupId(d.id) || label(d.name, 80) == null) return err('Некорректная группа'); let id = 'g_' + d.id; if (d.remove) { for (let s in all('device')) if (s.group == id) return err('Группа содержит устройства'); uc.delete(PKG, id); } else { uc.set(PKG, id, 'group'); set(id, 'name', d.name); } if (!uc.commit(PKG)) return err('Ошибка сохранения'); return { ok: true, id }; } },
+	bulk: { args: { payload: '' }, call: r => { let d = parsePayload(r.args.payload); if (!d || type(d.macs) != 'array' || length(d.macs) > 100) return err('Некорректный список'); let done = [], errors = []; for (let m in d.macs) { let found = null; for (let row in list().devices) if (row.mac == m) found = row; if (!found) { push(errors, m); continue; } let change = { ...found, ...d.change, mac: m }; let result = mutate(sid(m), change, false); if (result.error) push(errors, m + ': ' + result.error); else push(done, m); } return { done, errors }; } },
+	export: { call: () => { uc.unload(PKG); let data = { schema: 1, settings: uc.get_all(PKG, 'main'), devices: all('device'), groups: all('group') }; return { data }; } },
+	import: { args: { payload: '' }, call: r => importData(r.args.payload) },
+	sync: { call: () => sync() }
+};
+return { 'device.manager': methods };

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Schedule and interface refresh. No configuration writes in this loop.
+while :; do
+	/sbin/ubus call device.manager sync '{}' >/dev/null 2>&1
+	sleep 30
+done

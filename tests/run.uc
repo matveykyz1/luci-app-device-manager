@@ -1,0 +1,47 @@
+'use strict';
+include(TEST.backend);
+let api = TEST.api['device.manager'];
+function eq(a, b, msg) { if (a != b) { print('FAIL ' + msg + ': ' + sprintf('%J', a) + ' != ' + sprintf('%J', b) + '\n'); exit(1); } }
+function yes(x, msg) { if (!x) { print('FAIL ' + msg + '\n'); exit(1); } }
+function row(mac) { for (let d in api.list.call().devices) if (d.mac == mac) return d; return null; }
+let a = row('02:11:22:33:44:55');
+yes(a, 'DHCP client discovered'); eq(a.online, false, 'lease is not online proof');
+let b = row('02:aa:bb:cc:dd:ee');
+yes(b, 'neighbor without DHCP discovered'); eq(b.network, 'iot', 'IoT network mapped'); eq(b.online, true, 'reachable neighbor online');
+let c = row('02:99:88:77:66:55');
+yes(c, 'bridge FDB without DHCP discovered'); eq(c.online, false, 'FDB is not online proof');
+let save = api.save.call({ args: { payload: sprintf('%J', { mac: a.mac, name: 'Мой телефон', interface: 'br-lan' }) } });
+yes(save.ok, 'registration saved');
+a = row(a.mac); eq(a.registered, true, 'registered'); eq(a.name, 'Мой телефон', 'rename kept');
+TEST.files['/tmp/dhcp.leases'] = '';
+a = row(a.mac); eq(a.name, 'Мой телефон', 'offline name kept');
+TEST.files['/tmp/dhcp.leases'] = '9999999999 02:11:22:33:44:55 192.168.1.200 iPhone *\n';
+a = row(a.mac); eq(a.ips[0], '192.168.1.200', 'changed IP');
+let block = api.save.call({ args: { payload: sprintf('%J', { mac: a.mac, name: a.name, interface: 'br-lan', blocked: true }) } });
+yes(block.ok, 'block applied');
+let rules = TEST.files['/etc/nftables.d/90-device-manager.nft'];
+yes(index(rules, 'ether saddr 02:11:22:33:44:55') >= 0, 'MAC rule');
+yes(index(rules, 'iifname "br-lan" oifname "wan1"') >= 0, 'WAN rule');
+yes(index(rules, 'ip6') < 0, 'inet rule is family neutral');
+let unblock = api.save.call({ args: { payload: sprintf('%J', { mac: a.mac, name: a.name, interface: 'br-lan', blocked: false }) } });
+yes(unblock.ok, 'unblock applied');
+yes(index(TEST.files['/etc/nftables.d/90-device-manager.nft'], 'ether saddr') < 0, 'rule removed');
+let invalid = api.save.call({ args: { payload: sprintf('%J', { mac: 'bad', name: 'x' }) } });
+yes(invalid.error, 'bad MAC rejected');
+let badSchedule = api.save.call({ args: { payload: sprintf('%J', { mac: a.mac, name: a.name, schedule_enabled: true, schedule: '8@26:00-27:00', interface: 'br-lan' }) } });
+yes(badSchedule.error, 'bad schedule rejected');
+let s = api.save.call({ args: { payload: sprintf('%J', { mac: a.mac, name: a.name, schedule_enabled: true, schedule: '1,2,3,4,5@08:00-22:00;6,7@00:00-24:00', interface: 'br-lan' }) } });
+yes(s.ok, 'schedule saved');
+let exportData = api.export.call(); eq(exportData.data.schema, 1, 'export schema');
+let removed = api.remove.call({ args: { mac: a.mac } }); yes(removed.ok, 'remove'); eq(row(a.mac).registered, false, 'unregistered after removal');
+let group = api.group.call({ args: { payload: sprintf('%J', { id: 'phones', name: 'Телефоны' }) } });
+yes(group.ok, 'group created');
+let imported = api.import.call({ args: { payload: sprintf('%J', exportData.data) } });
+yes(imported.ok, 'export re-imported'); eq(row(a.mac).registered, true, 'import restored device');
+let badImport = api.import.call({ args: { payload: sprintf('%J', { schema: 1, groups: [], devices: [ {mac: a.mac}, {mac: a.mac} ] }) } });
+yes(badImport.error, 'duplicate import rejected');
+TEST.commands['ip -o link show 2>/dev/null'] = '1: br-lan: <UP> link/ether 02:22:33:44:55:66 brd ff:ff:ff:ff:ff:ff\n';
+let admin = api.save.call({ args: { payload: sprintf('%J', { mac: '02:22:33:44:55:66', name: 'Роутер', interface: 'br-lan', blocked: true }) } });
+yes(admin.error, 'router MAC protected');
+eq(api.capabilities.call().speed, false, 'unsupported shaping not presented as active');
+print('OK: discovery, online evidence, IoT mapping, registration, rename, IP change, firewall rendering, unblock, schedule, groups, import/export, duplicate and administrator protection, removal\n');

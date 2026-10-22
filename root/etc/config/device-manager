@@ -1,0 +1,5 @@
+config settings 'main'
+	option schema '1'
+	option internet_zone 'wan'
+	option online_seconds '120'
+

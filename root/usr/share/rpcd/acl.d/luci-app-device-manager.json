@@ -1,0 +1,7 @@
+{
+  "luci-app-device-manager": {
+    "description": "Управление зарегистрированными устройствами",
+    "read": { "ubus": { "device.manager": [ "list", "details", "capabilities", "statistics", "rule_status", "export" ] } },
+    "write": { "ubus": { "device.manager": [ "save", "remove", "group", "bulk", "import" ] } }
+  }
+}
