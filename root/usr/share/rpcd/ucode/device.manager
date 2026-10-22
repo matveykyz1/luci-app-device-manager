@@ -92,7 +92,7 @@ function logicalDevice(dev, map) {
 }
 function observe() {
 	uc.unload('dhcp');
-	let now = time(), found = {}, map = networkMap();
+	let now = time(), found = {}, map = networkMap(), internetZone = cfg('main', 'internet_zone') || 'wan';
 	let sightings = parsePayload(readfile(SIGHTINGS) || '{}') || {}, changed = false;
 	function add(m, ip, host, dev, medium, active, source) {
 		m = mac(m); if (!m) return;
@@ -101,10 +101,14 @@ function observe() {
 		if (host && host != '*' && !d.hostname) d.hostname = host;
 		if (dev && ident(dev)) {
 			dev = logicalDevice(dev, map); d.interface = dev;
-			if (map.device[dev]) { d.network = map.device[dev]; d.zone = map.zones[d.network] || ''; d.network_source = 'interface'; }
+			if (map.device[dev]) {
+				d.network = map.device[dev]; d.zone = map.zones[d.network] || ''; d.network_source = 'interface';
+				if (d.zone == internetZone) return;
+			}
 		}
 		else if (ip && !d.interface && d.network_source != 'interface') {
 			let n = networkFromIp(ip, map);
+			if (n && map.zones[n] == internetZone) return;
 			if (n && !d.network_ambiguous && (!d.network || d.network == n)) { d.network = n; d.zone = map.zones[n] || ''; d.network_source = 'subnet'; }
 			else if (n && d.network && d.network != n) { d.network = ''; d.zone = ''; d.network_source = ''; d.network_ambiguous = true; }
 		}

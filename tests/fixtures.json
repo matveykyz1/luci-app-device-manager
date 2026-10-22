@@ -19,7 +19,7 @@
     "links": { "/sys/class/net/lan2/master": "../../br-lan" },
     "commands": {
       "ip -o link show 2>/dev/null": "",
-      "ip -o -4 neigh show 2>/dev/null": "192.168.2.40 dev br-iot lladdr 02:aa:bb:cc:dd:ee REACHABLE router\n192.168.2.41 dev br-iot lladdr 02:aa:bb:cc:dd:ef STALE\n",
+      "ip -o -4 neigh show 2>/dev/null": "192.168.2.40 dev br-iot lladdr 02:aa:bb:cc:dd:ee REACHABLE router\n192.168.2.41 dev br-iot lladdr 02:aa:bb:cc:dd:ef STALE\n10.0.0.1 dev wan1 lladdr 02:de:ad:be:ef:01 REACHABLE\n",
       "ip -o -6 neigh show 2>/dev/null": "",
       "bridge -j fdb show 2>/dev/null": "[{\"mac\":\"02:99:88:77:66:55\",\"dev\":\"lan2\"}]",
       "ubus list 2>/dev/null": ""

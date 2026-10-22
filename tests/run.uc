@@ -16,6 +16,7 @@ let b = row('02:aa:bb:cc:dd:ee');
 yes(b, 'neighbor without DHCP discovered'); eq(b.network, 'iot', 'IoT network mapped'); eq(b.online, true, 'reachable neighbor online');
 let staleOnly = row('02:aa:bb:cc:dd:ef');
 yes(staleOnly, 'stale neighbor discovered'); eq(staleOnly.online, false, 'stale neighbor alone is not online proof');
+eq(row('02:de:ad:be:ef:01'), null, 'WAN gateway is not listed as a managed device');
 let seenAt = b.last_seen;
 TEST.commands['ip -o -4 neigh show 2>/dev/null'] = '192.168.2.40 dev br-iot lladdr 02:aa:bb:cc:dd:ee STALE router\n';
 b = row(b.mac);
