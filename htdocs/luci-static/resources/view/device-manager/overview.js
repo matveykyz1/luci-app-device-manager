@@ -296,7 +296,6 @@ return view.extend({
 				el('button', { 'class': 'btn', click: this.exportData.bind(this) }, _('Экспорт')),
 				el('button', { 'class': 'btn', click: this.importData.bind(this) }, _('Импорт'))
 			]), section(true), section(false),
-			el('p', { 'class': 'description' }, _('DHCP-аренда и устаревшая запись ARP не считаются признаком подключения. Блокировка действует на маршрутизируемый трафик через выбранную интернет-зону; MAC-адрес можно подменить.')),
 			this.caps.nlbwmon ? el('p', {}, _('Для подробной статистики используйте установленный nlbwmon.')) : el('p', {}, _('Статистика трафика: установите nlbwmon и luci-app-nlbwmon.')));
 	},
 	render: function(data) {

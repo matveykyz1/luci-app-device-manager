@@ -61,15 +61,15 @@ make 'CONFIG_PACKAGE_luci-app-device-manager=m' package/feeds/luci/luci-app-devi
 For the SRX5308 target above, the resulting package is:
 
 ```text
-bin/packages/mips64_octeonplus/luci/luci-app-device-manager-1.0.0-r4.apk
+bin/packages/mips64_octeonplus/luci/luci-app-device-manager-1.0.0-r5.apk
 ```
 
 For other architectures, build with the matching SDK or buildroot. The router-side package does not require Python or Lua. OpenWrt 24.10 with `opkg` requires a separate build against its LuCI/firewall4 components and has not been tested.
 
-This repository includes a built APK at `dist/luci-app-device-manager-1.0.0-r4.apk` for `mips64_octeonplus`:
+This repository includes a built APK at `dist/luci-app-device-manager-1.0.0-r5.apk` for `mips64_octeonplus`:
 
 ```text
-SHA-256: 68183884dcaf24265bef67acf7fb71d5875240023b194ffb447600418b616983
+SHA-256: 426d85960cc80ae5276d7045ee29efb25673a0c2cdb9d9bc3387e37dd0d171d4
 ```
 
 ## Install and remove
@@ -77,7 +77,7 @@ SHA-256: 68183884dcaf24265bef67acf7fb71d5875240023b194ffb447600418b616983
 The package is unsigned. For OpenWrt 25.12 with `apk`, copy the matching build to the router, then install it:
 
 ```sh
-apk add --allow-untrusted /tmp/luci-app-device-manager-1.0.0-r4.apk
+apk add --allow-untrusted /tmp/luci-app-device-manager-1.0.0-r5.apk
 ```
 
 Before removal, export the device registry from LuCI if you want to keep it. Remove the package with:
