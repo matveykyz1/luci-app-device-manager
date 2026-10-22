@@ -6,6 +6,12 @@ function yes(x, msg) { if (!x) { print('FAIL ' + msg + '\n'); exit(1); } }
 function row(mac) { for (let d in api.list.call().devices) if (d.mac == mac) return d; return null; }
 let a = row('02:11:22:33:44:55');
 yes(a, 'DHCP client discovered'); eq(a.online, false, 'lease is not online proof');
+eq(a.network, 'lan', 'unique DHCP subnet identifies logical network');
+eq(a.network_source, 'subnet', 'network source is marked as subnet inference');
+eq(a.interface, '', 'subnet inference does not invent ingress interface');
+push(TEST.ubus['network.interface.dump'].interface, { interface: 'guest', device: 'br-guest', 'ipv4-address': [ { address: '192.168.1.1', mask: 24 } ] });
+eq(row(a.mac).network, '', 'overlapping subnets are not guessed');
+pop(TEST.ubus['network.interface.dump'].interface);
 let b = row('02:aa:bb:cc:dd:ee');
 yes(b, 'neighbor without DHCP discovered'); eq(b.network, 'iot', 'IoT network mapped'); eq(b.online, true, 'reachable neighbor online');
 let c = row('02:99:88:77:66:55');
@@ -44,4 +50,4 @@ TEST.commands['ip -o link show 2>/dev/null'] = '1: br-lan: <UP> link/ether 02:22
 let admin = api.save.call({ args: { payload: sprintf('%J', { mac: '02:22:33:44:55:66', name: 'Роутер', interface: 'br-lan', blocked: true }) } });
 yes(admin.error, 'router MAC protected');
 eq(api.capabilities.call().speed, false, 'unsupported shaping not presented as active');
-print('OK: discovery, online evidence, IoT mapping, registration, rename, IP change, firewall rendering, unblock, schedule, groups, import/export, duplicate and administrator protection, removal\n');
+print('OK: discovery, subnet inference, online evidence, IoT mapping, registration, rename, IP change, firewall rendering, unblock, schedule, groups, import/export, duplicate and administrator protection, removal\n');

@@ -1,10 +1,11 @@
 include $(TOPDIR)/rules.mk
 
-PKG_LICENSE:=GPL-2.0-only
-PKG_MAINTAINER:=OpenWrt community
+PKG_LICENSE:=MIT
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=3
 LUCI_TITLE:=Registered device manager
+LUCI_URL:=https://github.com/matveykyz1/luci-app-device-manager
+LUCI_MAINTAINER:=matveykyz1
 LUCI_DEPENDS:=+luci-base +rpcd-mod-ucode +firewall4 +ucode-mod-fs +ucode-mod-uci +ucode-mod-ubus
 LUCI_PKGARCH:=all
 

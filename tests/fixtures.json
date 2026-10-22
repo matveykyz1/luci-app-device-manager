@@ -26,8 +26,8 @@
     },
     "ubus": {
       "network.interface.dump": { "interface": [
-        { "interface": "lan", "device": "br-lan", "l3_device": "br-lan" },
-        { "interface": "iot", "device": "br-iot", "l3_device": "br-iot" },
+        { "interface": "lan", "device": "br-lan", "l3_device": "br-lan", "ipv4-address": [{ "address": "192.168.1.1", "mask": 24 }] },
+        { "interface": "iot", "device": "br-iot", "l3_device": "br-iot", "ipv4-address": [{ "address": "192.168.2.1", "mask": 24 }] },
         { "interface": "wan", "device": "wan1", "l3_device": "wan1" }
       ] }
     }

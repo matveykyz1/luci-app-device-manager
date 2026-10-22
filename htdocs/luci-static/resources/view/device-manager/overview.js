@@ -58,8 +58,23 @@ function scheduleValue() {
 	return result.join(';');
 }
 function fmt(ts) { return ts ? new Date(ts * 1000).toLocaleString() : _('Неизвестно'); }
-function cell(x) { return el('td', { 'class': 'td' }, x == null || x === '' ? _('Неизвестно') : x); }
+function cell(x, title, label) { return el('td', { 'class': 'td', title: title || '', 'data-label': label || '' }, x == null || x === '' ? _('Неизвестно') : x); }
 function notice(msg, bad) { ui.addNotification(null, el('p', {}, msg), bad ? 'danger' : 'info'); }
+function medium(d) { return d.medium === 'wifi' ? _('Wi‑Fi') : d.medium === 'ethernet' ? _('Ethernet') : _('Неизвестно'); }
+function networkLabel(d) { return d.network || d.zone || _('Неизвестно'); }
+function networkHint(d) {
+	if (d.network_source === 'subnet') return _('Сеть определена по IP-подсети. Физическое подключение не подтверждено.');
+	if (d.network_source === 'saved') return _('Последняя сохранённая сеть; текущее подключение не подтверждено.');
+	if (d.network_source === 'interface') return _('Сеть определена по интерфейсу устройства.');
+	return _('Сеть не определена: доступны только данные без привязки к интерфейсу.');
+}
+function accessLabel(d) {
+	if (!d.registered) return _('После регистрации');
+	if (d.rule_applied === null) return _('Статус правила неизвестен');
+	if (d.internet_blocked) return d.blocked ? _('Заблокирован') : _('Заблокирован по расписанию');
+	if (d.desired_blocked) return _('Ожидается правило');
+	return d.schedule_enabled ? _('Разрешён по расписанию') : _('Разрешён');
+}
 
 return view.extend({
 	load: function() { return Promise.all([callList(), callCaps()]); },
@@ -81,6 +96,21 @@ return view.extend({
 	},
 	showDevice: function(d) {
 		var self = this, groups = [['', _('Без группы')]].concat((this.state.groups || []).map(function(g) { return [g['.name'], g.name || g['.name']]; }));
+		if (!d.registered) {
+			ui.showModal(_('Регистрация устройства'), [el('div', { 'class': 'dm-form' }, [
+				field('dm-name', _('Имя устройства'), d.name || d.hostname || d.mac),
+				el('p', {}, _('MAC: ') + d.mac + ' · ' + _('IP: ') + ((d.ips || []).join(', ') || _('Неизвестно'))),
+				el('p', { title: networkHint(d) }, _('Сеть: ') + networkLabel(d) + ' · ' + _('Подключение: ') + medium(d)),
+				el('p', {}, _('DHCP hostname: ') + (d.hostname || _('Неизвестно'))),
+				el('p', { 'class': 'description' }, _('Регистрация сохранит имя и MAC-адрес. IP-адрес не закрепляется; доступ в интернет не меняется.'))
+			]), el('div', { 'class': 'right' }, [
+				el('button', { 'class': 'btn', click: ui.hideModal }, _('Отмена')), ' ',
+				el('button', { 'class': 'btn cbi-button-positive', click: function() {
+					self.call(callSave, [JSON.stringify({ mac: d.mac, name: value('dm-name') })]).then(function() { ui.hideModal(); self.refresh(); });
+				} }, _('Зарегистрировать'))
+			])]);
+			return;
+		}
 		var content = [
 			el('div', { 'class': 'dm-form' }, [
 				el('h4', {}, _('Основное')),
@@ -92,7 +122,7 @@ return view.extend({
 				el('p', {}, _('Производитель: Неизвестно') + ' · ' + _('Регистрация: ') + (d.registered ? _('Да') : _('Нет'))),
 				el('p', {}, _('DHCP hostname: ') + (d.hostname || _('Неизвестно')) + ' · ' + _('DNS hostname: ') + (d.dns_hostname || _('Неизвестно'))),
 				el('h4', {}, _('Подключение')),
-				el('p', {}, _('Интерфейс: ') + (d.interface || _('Неизвестно')) + ' · ' + _('Сеть: ') + (d.network || _('Неизвестно')) + ' · ' + _('Зона: ') + (d.zone || _('Неизвестно'))),
+				el('p', { title: networkHint(d) }, _('Интерфейс: ') + (d.interface || _('Неизвестно')) + ' · ' + _('Сеть: ') + networkLabel(d) + ' · ' + _('Зона: ') + (d.zone || _('Неизвестно'))),
 				field('dm-interface', _('Интерфейс для правил доступа'), d.interface || ''),
 				el('p', {}, _('Способ: ') + (d.medium === 'wifi' ? _('Wi‑Fi') : d.medium === 'ethernet' ? _('Ethernet') : _('Неизвестно')) + ' · ' + _('Источники: ') + ((d.sources || []).join(', ') || _('Неизвестно'))),
 				el('h4', {}, _('Доступ в интернет')),
@@ -143,8 +173,8 @@ return view.extend({
 		var self = this;
 		ui.showModal(_('Добавить устройство'), [el('div', { 'class': 'dm-form' }, [
 			field('dm-mac', _('MAC-адрес'), ''), field('dm-name', _('Название'), ''),
-			field('dm-interface', _('Исходящий интерфейс, например br-lan'), ''),
-			el('p', {}, _('Регистрация не закрепляет IP. Интерфейс нужен только для правил доступа.'))
+			field('dm-interface', _('Интерфейс устройства, например br-lan (необязательно)'), ''),
+			el('p', {}, _('Регистрация не закрепляет IP. Интерфейс нужен только для правил доступа; укажите его, если уверены в значении.'))
 		]), el('div', { 'class': 'right' }, [
 			el('button', { 'class': 'btn', click: ui.hideModal }, _('Отмена')), ' ',
 			el('button', { 'class': 'btn cbi-button-positive', click: function() {
@@ -201,59 +231,65 @@ return view.extend({
 		if (!this.root || !this.state) return;
 		var self = this, d = this.state, q = this.query.toLocaleLowerCase();
 		var rows = (d.devices || []).filter(function(x) {
-			if (self.filter === 'registered' && !x.registered || self.filter === 'unregistered' && x.registered || self.filter === 'online' && !x.online || self.filter === 'blocked' && !x.internet_blocked) return false;
+			if (self.filter === 'online' && !x.online || self.filter === 'offline' && x.online || self.filter === 'blocked' && !x.internet_blocked) return false;
 			return !q || [x.name, x.mac, x.hostname, x.network, (x.ips || []).join(' ')].join(' ').toLocaleLowerCase().indexOf(q) >= 0;
 		}).sort(function(a, b) { return String(a[self.sort] || '').localeCompare(String(b[self.sort] || ''), 'ru'); });
 		var stats = [ ['all', _('Все')], ['registered', _('Зарегистрировано')], ['unregistered', _('Не зарегистрировано')], ['online', _('Онлайн')], ['offline', _('Офлайн')], ['blocked', _('Заблокировано')] ];
-		var table = el('table', { 'class': 'table dm-table' }, [el('thead', {}, el('tr', { 'class': 'tr' }, [
-			_('Выбор'), _('Название'), _('IP'), _('MAC'), _('Статус'), _('Сеть'), _('Подключение'), _('Регистрация'), _('Интернет'), _('Последняя активность'), _('Действия')
-		].map(function(h) { return el('th', { 'class': 'th' }, h); })))]);
-		var body = el('tbody');
-		rows.forEach(function(x) {
-			var checkbox = el('input', { type: 'checkbox', checked: !!self.selected[x.mac], change: function(ev) { self.selected[x.mac] = ev.target.checked; } });
-			var nameText = el('span', {}, x.name);
-			var rename = el('button', { 'class': 'btn dm-link', title: _('Переименовать'), click: function() {
-				var input = el('input', { type: 'text', value: x.name, 'class': 'dm-inline', 'aria-label': _('Название устройства') });
-				input.addEventListener('keydown', function(ev) {
-					if (ev.key === 'Escape') { input.replaceWith(nameText); return; }
-					if (ev.key !== 'Enter') return;
-					self.call(callSave, [JSON.stringify({ mac: x.mac, name: input.value, description: x.description || '', type: x.type || '', group: x.group || '', interface: x.interface || '', blocked: x.blocked, schedule_enabled: x.schedule_enabled, schedule: x.schedule || '' })]).then(function() { self.refresh(); });
-				});
-				nameText.replaceWith(input); input.focus(); input.select();
-			} }, '✎');
-			body.appendChild(el('tr', { 'class': 'tr' }, [cell(checkbox), cell([nameText, ' ', rename]), cell((x.ips || []).join(', ') || _('Неизвестно')), cell(x.mac),
-				cell(x.online ? _('Онлайн') : _('Офлайн')), cell(x.network || x.zone || _('Неизвестно')),
-				cell(x.medium === 'wifi' ? _('Wi‑Fi') : x.medium === 'ethernet' ? _('Ethernet') : _('Неизвестно')),
-				cell(!x.registered ? _('Не управляется') : x.rule_applied === null ? (x.desired_blocked ? _('Статус блокировки неизвестен') : _('Статус правил неизвестен')) :
-					x.internet_blocked ? (x.blocked ? _('Заблокирован') : _('Заблокирован по расписанию')) :
-					x.desired_blocked ? _('Ожидается правило') : (x.schedule_enabled ? _('Разрешён по расписанию') : _('Разрешён'))),
-				cell(fmt(x.last_seen)), cell([el('button', { 'class': 'btn', click: function() { self.showDevice(x); } }, _('Открыть')), ' ',
-					x.registered ? el('button', { 'class': 'btn', click: function() {
-						var data = { mac: x.mac, name: x.name, description: x.description || '', type: x.type || '', group: x.group || '', interface: x.interface || '', blocked: !x.blocked, schedule_enabled: x.schedule_enabled, schedule: x.schedule || '' };
-						self.call(callSave, [JSON.stringify(data)]).then(function() { self.refresh(); });
-					} }, x.blocked ? _('Разрешить') : _('Блокировать')) : ''])]));
-		});
-		table.appendChild(body);
+		function section(registered) {
+			var list = rows.filter(function(x) { return !!x.registered === registered; });
+			var title = registered ? _('Зарегистрированные устройства') : _('Незарегистрированные устройства');
+			var table = el('table', { 'class': 'table dm-table' }, [el('thead', {}, el('tr', { 'class': 'tr' }, [
+				_('Выбор'), _('Устройство'), _('Адрес'), _('Подключение'), _('Состояние'), _('Интернет'), _('Действие')
+			].map(function(h) { return el('th', { 'class': 'th' }, h); })))]);
+			var body = el('tbody');
+			list.forEach(function(x) {
+				var checkbox = el('input', { type: 'checkbox', checked: !!self.selected[x.mac], 'aria-label': _('Выбрать устройство') + ': ' + x.name, change: function(ev) { self.selected[x.mac] = ev.target.checked; } });
+				var name = el('button', { 'class': 'dm-name', click: function() { self.showDevice(x); } }, x.name || x.mac);
+				var nameWrap = el('div', { 'class': 'dm-device' }, [name, el('small', {}, x.mac)]);
+				if (registered) nameWrap.appendChild(el('button', { 'class': 'btn dm-link', title: _('Переименовать'), click: function() {
+					var input = el('input', { type: 'text', value: x.name, 'class': 'dm-inline', 'aria-label': _('Название устройства') });
+					input.addEventListener('keydown', function(ev) {
+						if (ev.key === 'Escape') { input.replaceWith(name); return; }
+						if (ev.key !== 'Enter') return;
+						self.call(callSave, [JSON.stringify({ mac: x.mac, name: input.value, description: x.description || '', type: x.type || '', group: x.group || '', interface: x.interface || '', blocked: x.blocked, schedule_enabled: x.schedule_enabled, schedule: x.schedule || '' })]).then(function() { self.refresh(); });
+					});
+					name.replaceWith(input); input.focus(); input.select();
+				} }, '✎'));
+				var connection = el('div', {}, [el('strong', {}, networkLabel(x)), el('small', {}, medium(x))]);
+				var state = el('div', {}, [el('strong', { 'class': x.online ? 'dm-online' : 'dm-offline' }, x.online ? _('Онлайн') : _('Офлайн')),
+					el('small', {}, x.last_seen ? _('Последняя активность: ') + fmt(x.last_seen) : _('Нет подтверждённой активности'))]);
+				var action = el('button', { 'class': registered ? 'btn' : 'btn cbi-button-positive', click: function() { self.showDevice(x); } }, registered ? _('Настроить') : _('Зарегистрировать'));
+				body.appendChild(el('tr', { 'class': 'tr dm-row', click: function(ev) {
+					if (!ev.target.closest('button, input')) self.showDevice(x);
+				} }, [cell(checkbox, '', _('Выбор')), cell(nameWrap, '', _('Устройство')), cell((x.ips || []).join(', ') || _('Неизвестно'), '', _('Адрес')),
+					cell(connection, networkHint(x), _('Подключение')), cell(state, _('Онлайн определяется по актуальным neighbor или hostapd данным, а не по DHCP-аренде.'), _('Состояние')),
+					cell(accessLabel(x), '', _('Интернет')), cell(action, '', _('Действие'))]));
+			});
+			table.appendChild(body);
+			return el('section', { 'class': 'dm-section' }, [el('h3', {}, title + ' (' + list.length + ')'),
+				el('p', { 'class': 'description' }, registered ? _('Откройте устройство, чтобы изменить имя, группу, доступ и расписание.') : _('Выберите устройство, задайте ему имя и зарегистрируйте. IP-адрес останется динамическим.')),
+				list.length ? el('div', { 'class': 'dm-scroll' }, table) : el('p', { 'class': 'dm-empty' }, _('Устройств нет'))]);
+		}
 		this.root.replaceChildren(el('h2', {}, _('Устройства')), el('div', { 'class': 'dm-stats' }, stats.map(function(s) { return el('div', { 'class': 'dm-stat' }, [el('strong', {}, String(d.counts[s[0]] || 0)), el('span', {}, s[1])]); })),
 			el('div', { 'class': 'dm-tools' }, [
 				el('input', { id: 'dm-search', type: 'search', placeholder: _('Поиск по имени, MAC, IP или сети'), value: this.query, input: function(ev) {
 					var pos = ev.target.selectionStart; self.query = ev.target.value; self.draw();
 					var next = document.getElementById('dm-search'); next.focus(); next.setSelectionRange(pos, pos);
 				} }),
-				el('select', { change: function(ev) { self.filter = ev.target.value; self.draw(); } }, [ ['all', _('Все')], ['registered', _('Зарегистрированные')], ['unregistered', _('Незарегистрированные')], ['online', _('Онлайн')], ['blocked', _('Заблокированные')] ].map(function(o) { return el('option', { value: o[0], selected: self.filter === o[0] }, o[1]); })),
+				el('select', { change: function(ev) { self.filter = ev.target.value; self.draw(); } }, [ ['all', _('Все состояния')], ['online', _('Онлайн')], ['offline', _('Офлайн')], ['blocked', _('Заблокированные')] ].map(function(o) { return el('option', { value: o[0], selected: self.filter === o[0] }, o[1]); })),
 				el('select', { change: function(ev) { self.sort = ev.target.value; self.draw(); } }, [ ['name', _('Сортировка: название')], ['mac', _('Сортировка: MAC')], ['network', _('Сортировка: сеть')], ['last_seen', _('Сортировка: активность')] ].map(function(o) { return el('option', { value: o[0], selected: self.sort === o[0] }, o[1]); })),
 				el('button', { 'class': 'btn', click: this.addManual.bind(this) }, _('Добавить по MAC')),
 				el('button', { 'class': 'btn', click: this.groupModal.bind(this) }, _('Новая группа')),
 				el('button', { 'class': 'btn', click: this.bulkModal.bind(this) }, _('Массовое действие')),
 				el('button', { 'class': 'btn', click: this.exportData.bind(this) }, _('Экспорт')),
 				el('button', { 'class': 'btn', click: this.importData.bind(this) }, _('Импорт'))
-			]), el('div', { 'class': 'dm-scroll' }, table),
+			]), section(true), section(false),
 			el('p', { 'class': 'description' }, _('DHCP-аренда и устаревшая запись ARP не считаются признаком подключения. Блокировка действует на маршрутизируемый трафик через выбранную интернет-зону; MAC-адрес можно подменить.')),
 			this.caps.nlbwmon ? el('p', {}, _('Для подробной статистики используйте установленный nlbwmon.')) : el('p', {}, _('Статистика трафика: установите nlbwmon и luci-app-nlbwmon.')));
 	},
 	render: function(data) {
 		this.state = data[0]; this.caps = data[1]; this.root = el('div', { 'class': 'cbi-map dm-root' });
-		var css = el('style', {}, '.dm-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}.dm-stat{border:1px solid #ddd;border-radius:5px;padding:10px;display:flex;flex-direction:column}.dm-stat strong{font-size:1.5em}.dm-tools{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.dm-tools input{min-width:220px;flex:1}.dm-scroll{overflow-x:auto}.dm-table{min-width:1050px}.dm-form{display:grid;gap:8px;max-height:65vh;overflow:auto}.dm-field{display:grid;gap:4px}.dm-check{display:block}.dm-link{padding:1px 5px;margin-left:4px}.dm-interval{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0;padding:8px;border:1px solid #ddd;border-radius:4px}.dm-days{display:flex;flex-wrap:wrap;gap:7px;width:100%}.dm-interval input.dm-start,.dm-interval input.dm-end{width:70px}@media(max-width:650px){.dm-tools>*{width:100%}.dm-stat{padding:7px}}');
+		var css = el('style', {}, '.dm-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}.dm-stat{border:1px solid #ddd;border-radius:5px;padding:10px;display:flex;flex-direction:column}.dm-stat strong{font-size:1.5em}.dm-tools{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.dm-tools input{min-width:220px;flex:1}.dm-section{margin:24px 0}.dm-section h3{margin-bottom:4px}.dm-empty{padding:16px;border:1px solid #ddd;border-radius:4px}.dm-scroll{overflow-x:auto}.dm-table{min-width:760px}.dm-row{cursor:pointer}.dm-device small,.dm-table td small{display:block;opacity:.7;margin-top:3px}.dm-name{border:0;background:none;padding:0;color:inherit;font:inherit;font-weight:600;text-align:left;cursor:pointer}.dm-name:hover{text-decoration:underline}.dm-online{color:#2a7c35}.dm-offline{opacity:.7}.dm-form{display:grid;gap:8px;max-height:65vh;overflow:auto}.dm-field{display:grid;gap:4px}.dm-check{display:block}.dm-link{padding:1px 5px;margin-left:4px}.dm-interval{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0;padding:8px;border:1px solid #ddd;border-radius:4px}.dm-days{display:flex;flex-wrap:wrap;gap:7px;width:100%}.dm-interval input.dm-start,.dm-interval input.dm-end{width:70px}@media(max-width:650px){.dm-tools>*{width:100%}.dm-stat{padding:7px}.dm-table{min-width:0}.dm-table thead{display:none}.dm-table tbody,.dm-table tr{display:block}.dm-table tr{margin:10px 0;padding:6px;border:1px solid #ddd;border-radius:5px}.dm-table td{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;border:0!important;padding:5px!important;text-align:right}.dm-table td:before{content:attr(data-label);font-weight:600;text-align:left}.dm-table td .dm-device{text-align:right}}');
 		this.draw(); poll.add(this.refresh.bind(this), 15);
 		return el('div', {}, [css, this.root]);
 	},

@@ -14,7 +14,7 @@ The board's base profile defines `br-lan` over `lan1`–`lan4`, `wan1` as WAN, a
 
 - Discovers clients from dnsmasq DHCPv4 leases and static entries, odhcpd DHCPv6 when its ubus method is available, IPv4/IPv6 neighbor tables, Linux bridge FDB, and hostapd.
 - Keeps DHCP hostname, DNS hostname, and the user's display name as separate fields. Devices can be registered by MAC or added manually; unregistered devices are listed separately. Registering a device does not reserve an IP address.
-- Provides search, sorting, filters, bulk actions, and automatic refresh every 15 seconds. A device card shows its group, description, type, network, and change history.
+- Shows separate registered and unregistered device lists. Selecting an unregistered client opens a simple registration dialog; selecting a registered client opens its settings card. Search, sorting, filters, bulk actions, and automatic refresh every 15 seconds are available. On narrow screens, entries become cards.
 - Blocks routed traffic to interfaces in the configured internet firewall zone using an application-owned nftables chain in `inet fw4`. The rule covers IPv4 and IPv6 where enabled and does not target access to the router itself.
 - Reports a device as blocked only when its MAC is found in the active application nftables chain. If the active rule state cannot be checked, the interface reports an unknown status.
 - Supports internet access schedules using the system timezone. A monitor checks the schedule every 30 seconds. The firewall includes the saved rules after a restart, and the monitor recalculates schedule state after startup.
@@ -24,7 +24,7 @@ The board's base profile defines `br-lan` over `lan1`–`lan4`, `wan1` as WAN, a
 
 ## Detection and limitations
 
-- A DHCP lease, static DHCP entry, or old FDB/ARP entry does **not** by itself mean a device is online. Online status requires a current `REACHABLE`, `DELAY`, or `PROBE` neighbor entry, or an authenticated hostapd association. A passive client without such evidence may appear offline.
+- A DHCP lease, static DHCP entry, or old FDB/ARP entry does **not** by itself mean a device is online. Online status requires a current `REACHABLE`, `DELAY`, or `PROBE` neighbor entry, or an authenticated hostapd association. A passive client without such evidence may appear offline. For DHCP clients, the logical network may be inferred from a unique matching netifd IP subnet; that does not establish a physical ingress interface and is not used to authorize blocking.
 - MAC addresses can be spoofed. Devices using private or randomized MAC addresses are not automatically merged. Blocking is refused if the incoming interface cannot be identified or hardware flow offloading is enabled.
 - The default internet firewall zone is `wan`. It can be changed with `uci set device-manager.main.internet_zone='zone_name'`. The rule does not cover access through other zones, such as a separate VPN or a second internet zone. Configure the zone that actually contains the intended external interfaces.
 - Per-device rate limiting is disabled. The target's `tc`/SQM integration, flow offloading, and hardware acceleration have not been validated on a live device. The application can retain imported desired-rate values but does not claim to apply them. Current rates and daily/monthly traffic totals are not shown without a reliable data source.
@@ -61,15 +61,15 @@ make 'CONFIG_PACKAGE_luci-app-device-manager=m' package/feeds/luci/luci-app-devi
 For the SRX5308 target above, the resulting package is:
 
 ```text
-bin/packages/mips64_octeonplus/luci/luci-app-device-manager-1.0.0-r1.apk
+bin/packages/mips64_octeonplus/luci/luci-app-device-manager-1.0.0-r3.apk
 ```
 
 For other architectures, build with the matching SDK or buildroot. The router-side package does not require Python or Lua. OpenWrt 24.10 with `opkg` requires a separate build against its LuCI/firewall4 components and has not been tested.
 
-This repository includes a built APK at `dist/luci-app-device-manager-1.0.0-r1.apk` for `mips64_octeonplus`:
+This repository includes a built APK at `dist/luci-app-device-manager-1.0.0-r3.apk` for `mips64_octeonplus`:
 
 ```text
-SHA-256: 51509f353b078f20f05b5f3632e2792b97164597e0e3e6f29714016ace09cadb
+SHA-256: 72dacb839fd59bfdc1b2faa8936d58eff4867d741131a6981e5f100e59fbc421
 ```
 
 ## Install and remove
@@ -77,7 +77,7 @@ SHA-256: 51509f353b078f20f05b5f3632e2792b97164597e0e3e6f29714016ace09cadb
 The package is unsigned. For OpenWrt 25.12 with `apk`, copy the matching build to the router, then install it:
 
 ```sh
-apk add --allow-untrusted /tmp/luci-app-device-manager-1.0.0-r1.apk
+apk add --allow-untrusted /tmp/luci-app-device-manager-1.0.0-r3.apk
 ```
 
 Before removal, export the device registry from LuCI if you want to keep it. Remove the package with:
@@ -102,15 +102,15 @@ The following still require testing on the target router: actual IPv4/IPv6 packe
 
 | Area | Verification |
 |---|---|
-| DHCP, non-DHCP, multiple networks | Local RPC tests with mocked DHCP, neighbor, and bridge data, including IoT |
+| DHCP, non-DHCP, multiple networks | Local RPC tests with mocked DHCP, neighbor, and bridge data, including IoT and unambiguous subnet inference |
 | Registration, rename, offline retention, IP change, UCI | Local tests and APK build |
 | IPv4/IPv6 block and unblock | Family-neutral `inet fw4` rule generation checked locally; packet handling on a router is unverified |
 | Schedules, firewall restart, router reboot | Schedule parsing and saved rules checked locally; timer transitions and reboot are unverified on device |
-| Mobile layout | Responsive styles and horizontal table scrolling implemented; browser check not performed |
+| Mobile layout | Compact device cards implemented for narrow screens; browser check not performed |
 | Optional dependencies | Rate limiting and traffic statistics are reported as unavailable when no reliable backend exists; live target not checked |
 | Protection of router administration | Rule applies to `forward`; router MAC is rejected; hardware behavior is unverified |
 | Removal and third-party settings | Package script removes only its own nftables file; removal was not run on a device |
 
 ## License
 
-The source code is licensed under the [MIT License](LICENSE). The package Makefile also declares `GPL-2.0-only`; see the source files and their applicable terms when redistributing a built package.
+The source code and package metadata declare the [MIT License](LICENSE).
