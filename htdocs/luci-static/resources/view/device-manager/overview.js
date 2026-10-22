@@ -3,6 +3,7 @@
 'require rpc';
 'require poll';
 'require ui';
+'require uci';
 
 var callList = rpc.declare({ object: 'device.manager', method: 'list' });
 var callSave = rpc.declare({ object: 'device.manager', method: 'save', params: [ 'payload' ] });
@@ -57,7 +58,21 @@ function scheduleValue() {
 	});
 	return result.join(';');
 }
-function fmt(ts) { return ts ? new Date(ts * 1000).toLocaleString() : _('Неизвестно'); }
+var timeFormatter;
+function configureTimeFormatter() {
+	var zone = uci.get('system', '@system[0]', 'zonename');
+	var style = uci.get('system', '@system[0]', 'clock_timestyle') || '0';
+	var hourCycle = uci.get('system', '@system[0]', 'clock_hourcycle') || '0';
+	var options = {
+		dateStyle: 'medium',
+		timeStyle: style === '0' ? 'long' : 'full',
+		hourCycle: hourCycle === '0' ? undefined : hourCycle
+	};
+	if (zone) options.timeZone = zone.replaceAll(' ', '_');
+	try { timeFormatter = new Intl.DateTimeFormat(undefined, options); }
+	catch (e) { delete options.timeZone; timeFormatter = new Intl.DateTimeFormat(undefined, options); }
+}
+function fmt(ts) { return ts ? (timeFormatter || new Intl.DateTimeFormat()).format(new Date(ts * 1000)) : _('Неизвестно'); }
 function cell(x, title, label) { return el('td', { 'class': 'td', title: title || '', 'data-label': label || '' }, x == null || x === '' ? _('Неизвестно') : x); }
 function notice(msg, bad) { ui.addNotification(null, el('p', {}, msg), bad ? 'danger' : 'info'); }
 function medium(d) { return d.medium === 'wifi' ? _('Wi‑Fi') : d.medium === 'ethernet' ? _('Ethernet') : _('Неизвестно'); }
@@ -77,7 +92,7 @@ function accessLabel(d) {
 }
 
 return view.extend({
-	load: function() { return Promise.all([callList(), callCaps()]); },
+	load: function() { return Promise.all([callList(), callCaps(), uci.load('system')]); },
 	state: null,
 	caps: null,
 	query: '',
@@ -299,7 +314,7 @@ return view.extend({
 			this.caps.nlbwmon ? el('p', {}, _('Для подробной статистики используйте установленный nlbwmon.')) : el('p', {}, _('Статистика трафика: установите nlbwmon и luci-app-nlbwmon.')));
 	},
 	render: function(data) {
-		this.state = data[0]; this.caps = data[1]; this.root = el('div', { 'class': 'cbi-map dm-root' });
+		this.state = data[0]; this.caps = data[1]; configureTimeFormatter(); this.root = el('div', { 'class': 'cbi-map dm-root' });
 		var css = el('style', {}, '.dm-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:12px 0}.dm-stat{border:1px solid #ddd;border-radius:5px;padding:10px;display:flex;flex-direction:column}.dm-stat strong{font-size:1.5em}.dm-tools{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.dm-tools input{min-width:220px;flex:1}.dm-section{margin:24px 0}.dm-section h3{margin-bottom:4px}.dm-empty{padding:16px;border:1px solid #ddd;border-radius:4px}.dm-scroll{overflow-x:auto}.dm-table{min-width:760px}.dm-row{cursor:pointer}.dm-device small,.dm-table td small{display:block;opacity:.7;margin-top:3px}.dm-name{border:0;background:none;padding:0;color:inherit;font:inherit;font-weight:600;text-align:left;cursor:pointer}.dm-name:hover{text-decoration:underline}.dm-online{color:#2a7c35}.dm-offline{opacity:.7}.dm-form{display:grid;gap:8px;max-height:65vh;overflow:auto}.dm-field{display:grid;gap:4px}.dm-check{display:block}.dm-link{padding:1px 5px;margin-left:4px}.dm-interval{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0;padding:8px;border:1px solid #ddd;border-radius:4px}.dm-days{display:flex;flex-wrap:wrap;gap:7px;width:100%}.dm-interval input.dm-start,.dm-interval input.dm-end{width:70px}@media(max-width:650px){.dm-tools>*{width:100%}.dm-stat{padding:7px}.dm-table{min-width:0}.dm-table thead{display:none}.dm-table tbody,.dm-table tr{display:block}.dm-table tr{margin:10px 0;padding:6px;border:1px solid #ddd;border-radius:5px}.dm-table td{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;border:0!important;padding:5px!important;text-align:right}.dm-table td:before{content:attr(data-label);font-weight:600;text-align:left}.dm-table td .dm-device{text-align:right}}');
 		this.draw(); poll.add(this.refresh.bind(this), 15);
 		return el('div', {}, [css, this.root]);

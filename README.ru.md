@@ -48,16 +48,16 @@ ln -s /путь/к/luci-app-device-manager feeds/luci/applications/luci-app-devi
 make 'CONFIG_PACKAGE_luci-app-device-manager=m' package/feeds/luci/luci-app-device-manager/compile -j2
 ```
 
-Для описанного SRX5308 результат: `bin/packages/mips64_octeonplus/luci/luci-app-device-manager-1.0.0-r7.apk`. На другой архитектуре нужно собрать пакет в соответствующем SDK/buildroot. Исходники не требуют Python или Lua на роутере. Для OpenWrt 24.10 и `opkg` нужна отдельная сборка с его LuCI/firewall4, она не проверена.
+Для описанного SRX5308 результат: `bin/packages/mips64_octeonplus/luci/luci-app-device-manager-1.0.0-r8.apk`. На другой архитектуре нужно собрать пакет в соответствующем SDK/buildroot. Исходники не требуют Python или Lua на роутере. Для OpenWrt 24.10 и `opkg` нужна отдельная сборка с его LuCI/firewall4, она не проверена.
 
-Копия собранного APK включена в `dist/luci-app-device-manager-1.0.0-r7.apk` (SHA-256: `3d191dd15cca6420cdaee5df57087093c382e04e8bdb26cbd869d3f2b531ef18`).
+Копия собранного APK включена в `dist/luci-app-device-manager-1.0.0-r8.apk` (SHA-256: `193146e26a828fcfd9aff2039406e3a3eea6b4ae092cbb648a1ba5ee48cb54f1`).
 
 ## Установка и удаление
 
 Установка на роутер выполняется **только после отдельного разрешения владельца**. Для OpenWrt 25.12 скопируйте собранный APK и выполните на роутере:
 
 ```sh
-apk add --allow-untrusted /tmp/luci-app-device-manager-1.0.0-r7.apk
+apk add --allow-untrusted /tmp/luci-app-device-manager-1.0.0-r8.apk
 ```
 
 Перед удалением экспортируйте реестр из интерфейса, если он нужен. Удаление:

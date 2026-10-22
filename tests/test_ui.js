@@ -30,12 +30,18 @@ function find(node, predicate, result = []) {
 
 const source = fs.readFileSync(path.join(__dirname, '../htdocs/luci-static/resources/view/device-manager/overview.js'), 'utf8');
 let modal;
-const app = new Function('E', 'view', 'rpc', 'poll', 'ui', '_', 'document', 'window', source)(
+const systemSettings = {
+	zonename: 'Europe/Moscow',
+	clock_timestyle: '0',
+	clock_hourcycle: 'h23'
+};
+const app = new Function('E', 'view', 'rpc', 'poll', 'ui', 'uci', '_', 'document', 'window', source)(
 	E,
 	{ extend: value => value },
 	{ declare: () => () => Promise.resolve({ available: false, status: 'inactive' }) },
 	{ add() {} },
 	{ showModal: (title, content) => { modal = { title, children: content }; }, addNotification() {} },
+	{ load: () => Promise.resolve(), get: (_config, _section, option) => systemSettings[option] },
 	value => value,
 	{ getElementById: () => null },
 	{}
@@ -46,6 +52,9 @@ const devices = [
 	{ mac: '02:aa:bb:cc:dd:ee', name: 'Laptop', registered: false, online: false, ips: ['10.0.0.12'] }
 ];
 app.render([{ devices, groups: [], counts: { all: 2, registered: 1, unregistered: 1, online: 0, offline: 2, blocked: 0 } }, { nlbwmon: false, speed_reason: 'Unavailable' }]);
+assert.match(source, /require uci/);
+assert.match(source, /uci\.load\('system'\)/);
+assert.match(source, /zonename/);
 
 function rowBoxes() { return find(app.root, n => n.tag === 'input' && n.attrs.type === 'checkbox'); }
 assert.equal(rowBoxes().length, 2);
