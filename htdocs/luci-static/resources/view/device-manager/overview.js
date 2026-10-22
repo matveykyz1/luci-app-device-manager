@@ -22,16 +22,16 @@ function field(id, title, val, type) {
 	return el('label', { 'class': 'dm-field' }, [el('span', {}, title), el('input', { id: id, type: type || 'text', value: val || '', 'class': 'cbi-input-text' })]);
 }
 function select(id, title, values, current) {
-	return el('label', { 'class': 'dm-field' }, [el('span', {}, title), el('select', { id: id, 'class': 'cbi-input-select' }, values.map(function(v) { return el('option', { value: v[0], selected: v[0] === current }, v[1]); }))]);
+	return el('label', { 'class': 'dm-field' }, [el('span', {}, title), el('select', { id: id, 'class': 'cbi-input-select' }, values.map(function(v) { return el('option', { value: v[0], selected: v[0] === current ? '' : null }, v[1]); }))]);
 }
 function box(id, title, enabled) {
-	return el('label', { 'class': 'dm-check' }, [el('input', { id: id, type: 'checkbox', checked: !!enabled }), ' ', title]);
+	return el('label', { 'class': 'dm-check' }, [el('input', { id: id, type: 'checkbox', checked: enabled ? '' : null }), ' ', title]);
 }
 function scheduleRow(days, start, end) {
 	var names = [ _('Пн'), _('Вт'), _('Ср'), _('Чт'), _('Пт'), _('Сб'), _('Вс') ];
 	var row = el('div', { 'class': 'dm-interval' });
 	row.appendChild(el('div', { 'class': 'dm-days' }, names.map(function(name, i) {
-		return el('label', {}, [el('input', { type: 'checkbox', value: String(i + 1), checked: days.indexOf(String(i + 1)) >= 0 }), ' ', name]);
+		return el('label', {}, [el('input', { type: 'checkbox', value: String(i + 1), checked: days.indexOf(String(i + 1)) >= 0 ? '' : null }), ' ', name]);
 	})));
 	row.appendChild(el('input', { type: 'text', 'class': 'dm-start', value: start || '08:00', placeholder: '08:00', 'aria-label': _('Начало') }));
 	row.appendChild(el('span', {}, '–'));
@@ -84,6 +84,15 @@ return view.extend({
 	filter: 'all',
 	sort: 'name',
 	selected: {},
+	visibleMacs: [],
+	selectAllVisible: function() {
+		this.visibleMacs.forEach(function(mac) { this.selected[mac] = true; }, this);
+		this.draw();
+	},
+	clearSelection: function() {
+		this.selected = {};
+		this.draw();
+	},
 	call: function(fn, args) {
 		return fn.apply(null, args || []).then(function(r) {
 			if (r && r.error) throw new Error(r.error);
@@ -234,6 +243,7 @@ return view.extend({
 			if (self.filter === 'online' && !x.online || self.filter === 'offline' && x.online || self.filter === 'blocked' && !x.internet_blocked) return false;
 			return !q || [x.name, x.mac, x.hostname, x.network, (x.ips || []).join(' ')].join(' ').toLocaleLowerCase().indexOf(q) >= 0;
 		}).sort(function(a, b) { return String(a[self.sort] || '').localeCompare(String(b[self.sort] || ''), 'ru'); });
+		this.visibleMacs = rows.map(function(x) { return x.mac; });
 		var stats = [ ['all', _('Все')], ['registered', _('Зарегистрировано')], ['unregistered', _('Не зарегистрировано')], ['online', _('Онлайн')], ['offline', _('Офлайн')], ['blocked', _('Заблокировано')] ];
 		function section(registered) {
 			var list = rows.filter(function(x) { return !!x.registered === registered; });
@@ -243,7 +253,7 @@ return view.extend({
 			].map(function(h) { return el('th', { 'class': 'th' }, h); })))]);
 			var body = el('tbody');
 			list.forEach(function(x) {
-				var checkbox = el('input', { type: 'checkbox', checked: !!self.selected[x.mac], 'aria-label': _('Выбрать устройство') + ': ' + x.name, change: function(ev) { self.selected[x.mac] = ev.target.checked; } });
+				var checkbox = el('input', { type: 'checkbox', checked: self.selected[x.mac] ? '' : null, 'aria-label': _('Выбрать устройство') + ': ' + x.name, change: function(ev) { self.selected[x.mac] = ev.target.checked; } });
 				var name = el('button', { 'class': 'dm-name', click: function() { self.showDevice(x); } }, x.name || x.mac);
 				var nameWrap = el('div', { 'class': 'dm-device' }, [name, el('small', {}, x.mac)]);
 				if (registered) nameWrap.appendChild(el('button', { 'class': 'btn dm-link', title: _('Переименовать'), click: function() {
@@ -276,10 +286,12 @@ return view.extend({
 					var pos = ev.target.selectionStart; self.query = ev.target.value; self.draw();
 					var next = document.getElementById('dm-search'); next.focus(); next.setSelectionRange(pos, pos);
 				} }),
-				el('select', { change: function(ev) { self.filter = ev.target.value; self.draw(); } }, [ ['all', _('Все состояния')], ['online', _('Онлайн')], ['offline', _('Офлайн')], ['blocked', _('Заблокированные')] ].map(function(o) { return el('option', { value: o[0], selected: self.filter === o[0] }, o[1]); })),
-				el('select', { change: function(ev) { self.sort = ev.target.value; self.draw(); } }, [ ['name', _('Сортировка: название')], ['mac', _('Сортировка: MAC')], ['network', _('Сортировка: сеть')], ['last_seen', _('Сортировка: активность')] ].map(function(o) { return el('option', { value: o[0], selected: self.sort === o[0] }, o[1]); })),
+				el('select', { change: function(ev) { self.filter = ev.target.value; self.draw(); } }, [ ['all', _('Все состояния')], ['online', _('Онлайн')], ['offline', _('Офлайн')], ['blocked', _('Заблокированные')] ].map(function(o) { return el('option', { value: o[0], selected: self.filter === o[0] ? '' : null }, o[1]); })),
+				el('select', { change: function(ev) { self.sort = ev.target.value; self.draw(); } }, [ ['name', _('Сортировка: название')], ['mac', _('Сортировка: MAC')], ['network', _('Сортировка: сеть')], ['last_seen', _('Сортировка: активность')] ].map(function(o) { return el('option', { value: o[0], selected: self.sort === o[0] ? '' : null }, o[1]); })),
 				el('button', { 'class': 'btn', click: this.addManual.bind(this) }, _('Добавить по MAC')),
 				el('button', { 'class': 'btn', click: this.groupModal.bind(this) }, _('Новая группа')),
+				el('button', { 'class': 'btn', title: _('Выбрать все устройства, видимые с текущими фильтрами'), click: this.selectAllVisible.bind(this) }, _('Выбрать все')),
+				el('button', { 'class': 'btn', click: this.clearSelection.bind(this) }, _('Снять выбор')),
 				el('button', { 'class': 'btn', click: this.bulkModal.bind(this) }, _('Массовое действие')),
 				el('button', { 'class': 'btn', click: this.exportData.bind(this) }, _('Экспорт')),
 				el('button', { 'class': 'btn', click: this.importData.bind(this) }, _('Импорт'))

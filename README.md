@@ -14,7 +14,7 @@ The board's base profile defines `br-lan` over `lan1`–`lan4`, `wan1` as WAN, a
 
 - Discovers clients from dnsmasq DHCPv4 leases and static entries, odhcpd DHCPv6 when its ubus method is available, IPv4/IPv6 neighbor tables, Linux bridge FDB, and hostapd.
 - Keeps DHCP hostname, DNS hostname, and the user's display name as separate fields. Devices can be registered by MAC or added manually; unregistered devices are listed separately. Registering a device does not reserve an IP address.
-- Shows separate registered and unregistered device lists. Selecting an unregistered client opens a simple registration dialog; selecting a registered client opens its settings card. Search, sorting, filters, bulk actions, and automatic refresh every 15 seconds are available. On narrow screens, entries become cards.
+- Shows separate registered and unregistered device lists. Selecting an unregistered client opens a simple registration dialog; selecting a registered client opens its settings card. Search, sorting, filters, select-all-visible, clear-selection, bulk actions, and automatic refresh every 15 seconds are available. On narrow screens, entries become cards.
 - Blocks routed traffic to interfaces in the configured internet firewall zone using an application-owned nftables chain in `inet fw4`. The rule covers IPv4 and IPv6 where enabled and does not target access to the router itself.
 - Reports a device as blocked only when its MAC is found in the active application nftables chain. If the active rule state cannot be checked, the interface reports an unknown status.
 - Supports internet access schedules using the system timezone. A monitor checks the schedule every 30 seconds. The firewall includes the saved rules after a restart, and the monitor recalculates schedule state after startup.
@@ -61,15 +61,15 @@ make 'CONFIG_PACKAGE_luci-app-device-manager=m' package/feeds/luci/luci-app-devi
 For the SRX5308 target above, the resulting package is:
 
 ```text
-bin/packages/mips64_octeonplus/luci/luci-app-device-manager-1.0.0-r3.apk
+bin/packages/mips64_octeonplus/luci/luci-app-device-manager-1.0.0-r4.apk
 ```
 
 For other architectures, build with the matching SDK or buildroot. The router-side package does not require Python or Lua. OpenWrt 24.10 with `opkg` requires a separate build against its LuCI/firewall4 components and has not been tested.
 
-This repository includes a built APK at `dist/luci-app-device-manager-1.0.0-r3.apk` for `mips64_octeonplus`:
+This repository includes a built APK at `dist/luci-app-device-manager-1.0.0-r4.apk` for `mips64_octeonplus`:
 
 ```text
-SHA-256: 72dacb839fd59bfdc1b2faa8936d58eff4867d741131a6981e5f100e59fbc421
+SHA-256: 68183884dcaf24265bef67acf7fb71d5875240023b194ffb447600418b616983
 ```
 
 ## Install and remove
@@ -77,7 +77,7 @@ SHA-256: 72dacb839fd59bfdc1b2faa8936d58eff4867d741131a6981e5f100e59fbc421
 The package is unsigned. For OpenWrt 25.12 with `apk`, copy the matching build to the router, then install it:
 
 ```sh
-apk add --allow-untrusted /tmp/luci-app-device-manager-1.0.0-r3.apk
+apk add --allow-untrusted /tmp/luci-app-device-manager-1.0.0-r4.apk
 ```
 
 Before removal, export the device registry from LuCI if you want to keep it. Remove the package with:
@@ -94,9 +94,10 @@ Run the host-side backend tests with ucode installed:
 
 ```sh
 UCODE=/path/to/ucode tests/test_backend.sh
+node tests/test_ui.js
 ```
 
-Tests use mocked UCI, ubus, and network sources; they do not connect to a router. Covered cases include DHCP and non-DHCP discovery, an IoT network, avoiding false online status from leases/FDB, registration, preserving names after a device disappears, IP changes, nftables rule generation/removal, schedule parsing, groups, import/export, duplicate rejection, router-MAC protection, and disabled rate limiting. The backend was checked with the ucode compiler, JavaScript with `node --check`, shell scripts with `sh -n`, and JSON with `python -m json.tool`. The APK was built with the local OpenWrt buildroot and inspected with `apk adbdump`.
+Tests use mocked UCI, ubus, network sources, and LuCI DOM behavior; they do not connect to a router. Covered cases include DHCP and non-DHCP discovery, an IoT network, avoiding false online status from leases/FDB, registration, preserving names after a device disappears, IP changes, nftables rule generation/removal, schedule parsing, groups, import/export, duplicate rejection, router-MAC protection, and disabled rate limiting. The UI test checks default checkbox states, selecting and clearing visible devices, and saved access/schedule states. JavaScript syntax was checked with `node --check`. The APK was built with the local OpenWrt buildroot and inspected with `apk adbdump`.
 
 The following still require testing on the target router: actual IPv4/IPv6 packet handling, schedule transitions and firewall restart, reboot behavior, Wi-Fi and DHCPv6 status on the installed firmware, APK install/removal and import, mobile-browser layout, and interaction with the router's active firewall/VPN setup. IPv6 testing on the described SRX5308 profile requires an environment where IPv6 is enabled.
 
