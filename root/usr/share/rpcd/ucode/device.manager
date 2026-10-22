@@ -10,6 +10,7 @@ const RULE = '/etc/nftables.d/90-device-manager.nft';
 const TMP = '/tmp/device-manager-rules.nft';
 const STATE = '/tmp/device-manager-state.json';
 const SIGHTINGS = '/tmp/device-manager-sightings.json';
+const ONLINE_GRACE = 120;
 const uc = cursor();
 const bus = connect();
 
@@ -129,8 +130,12 @@ function observe() {
 		for (let a in (l.ipaddrs || [])) add(l.mac, a.address, l.hostname, null, null, false, 'dhcp6');
 	}
 	for (let line in split(command('ip -o -4 neigh show') + '\n' + command('ip -o -6 neigh show'), '\n')) {
-		let m = match(line, /^([^ ]+) dev ([^ ]+).*lladdr ([0-9a-fA-F:]{17}).* (REACHABLE|DELAY|PROBE|STALE|FAILED|INCOMPLETE|PERMANENT)$/);
-		if (m) add(m[3], m[1], null, m[2], null, index(['REACHABLE', 'DELAY', 'PROBE'], m[4]) >= 0, 'neighbor');
+		let m = match(line, /^([^ ]+) dev ([^ ]+).*lladdr ([0-9a-fA-F:]{17})(.*)$/);
+		if (!m) continue;
+		let state = null;
+		for (let token in split(trim(m[4]), /\s+/))
+			if (index(['REACHABLE', 'DELAY', 'PROBE', 'STALE', 'FAILED', 'INCOMPLETE', 'PERMANENT', 'NOARP'], token) >= 0) { state = token; break; }
+		add(m[3], m[1], null, m[2], null, index(['REACHABLE', 'DELAY', 'PROBE'], state) >= 0, 'neighbor');
 	}
 	let fdbText = command('bridge -j fdb show'), fdb = parsePayload(fdbText);
 	if (type(fdb) != 'array') {
@@ -157,7 +162,8 @@ function observe() {
 	for (let m, d in found) {
 		let old = sightings[m] || {};
 		if (!old.first_seen) { old.first_seen = now; changed = true; }
-		if (d.online) { old.last_seen = now; changed = true; }
+		if (d.online) { old.last_seen = now; old.last_active = now; changed = true; }
+		else if (old.last_active && now - old.last_active <= ONLINE_GRACE) d.online = true;
 		if (old.online != d.online) {
 			old.status_history = old.status_history || [];
 			push(old.status_history, { when: now, online: d.online });

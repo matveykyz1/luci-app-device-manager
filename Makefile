@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_LICENSE:=MIT
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=5
+PKG_RELEASE:=6
 LUCI_TITLE:=Registered device manager
 LUCI_URL:=https://github.com/matveykyz1/luci-app-device-manager
 LUCI_MAINTAINER:=matveykyz1
